@@ -23,6 +23,8 @@ The `entrypoint` field defines what the "main" function will be – that is, the
 
 Here is an example of a simple `Workflow` spec with a single `template`:
 
+/// tab | YAML
+
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Workflow
@@ -37,6 +39,27 @@ spec:
       command: [echo]
       args: ["hello world"]   # This template runs "echo" in the "busybox" image with arguments "hello world"
 ```
+
+///
+
+/// tab | Python
+
+```python
+from hera.workflows import Container, Workflow
+
+with Workflow(
+    generate_name="hello-world-",
+    entrypoint="hello-world",
+) as w:
+    Container(
+        name="hello-world",
+        image="busybox",
+        command=["echo"],
+        args=["hello world"],
+    )
+```
+
+///
 
 ### `template` Types
 
@@ -54,6 +77,8 @@ The standard output of the container is automatically exported into an [Argo var
 
 Example:
 
+/// tab | YAML
+
 ```yaml
   - name: hello-world
     container:
@@ -62,6 +87,23 @@ Example:
       args: ["hello world"]
 ```
 
+///
+
+/// tab | Python
+
+```python
+from hera.workflows import Container
+
+Container(
+    name="hello-world",
+    image="busybox",
+    command=["echo"],
+    args=["hello world"],
+)
+```
+
+///
+
 ##### [Script](fields.md#scripttemplate)
 
 A convenience wrapper around a `container`.
@@ -69,7 +111,13 @@ The spec is the same as a container, but adds the `source:` field which allows y
 The script will be saved into a file and executed for you.
 The standard output of the script is automatically exported into an [Argo variable](./variables.md) in the same way as a Container Template.
 
+!!! Tip
+    If you are mainly using Python, Hera offers a `script` decorator with a tighter integration with Python.
+    Read more in [the Hera Scripts guide](https://hera.readthedocs.io/en/stable/user-guides/script-basics/).
+
 Example:
+
+/// tab | YAML
 
 ```yaml
   - name: gen-random-int
@@ -82,12 +130,32 @@ Example:
         print(i)
 ```
 
+///
+
+/// tab | Python
+
+```python
+from hera.workflows import script
+
+@script(image="python:alpine3.6")
+def gen_random_int(): # (1)!
+    import random
+    i = random.randint(1, 100)
+    print(i)
+```
+
+1. Note, the template name will have underscores replaced by hyphens, so you should refer to this script template as `gen-random-int` within strings.
+
+///
+
 ##### [Resource](fields.md#resourcetemplate)
 
 Performs operations on cluster Resources directly.
 It can be used to get, create, apply, delete, replace, or patch resources on your cluster.
 
 This example creates a `ConfigMap` resource on the cluster:
+
+/// tab | YAML
 
 ```yaml
   - name: k8s-owner-reference
@@ -102,6 +170,27 @@ This example creates a `ConfigMap` resource on the cluster:
           some: value
 ```
 
+///
+
+/// tab | Python
+
+```python
+from hera.workflows import Resource
+
+Resource(
+  action="create",
+  manifest="""\
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  generateName: owned-eg-
+data:
+  some: value"""
+)
+```
+
+///
+
 ##### [Suspend](fields.md#suspendtemplate)
 
 A suspend template will suspend execution, either for a duration or until it is resumed manually.
@@ -109,11 +198,25 @@ Suspend templates can be resumed from the CLI (with `argo resume`), the [API end
 
 Example:
 
+/// tab | YAML
+
 ```yaml
   - name: delay
     suspend:
       duration: "20s"
 ```
+
+///
+
+/// tab | Python
+
+```python
+from hera.workflows import Suspend
+
+Suspend(name="delay", duration="20s")
+```
+
+///
 
 ##### [Plugin](fields.md#plugin)
 
@@ -121,12 +224,43 @@ A [Plugin Template](plugins.md) allows you to reference an executor plugin.
 
 Example:
 
+/// tab | YAML
+
 ```yaml
   - name: main
     plugin:
       slack:
         text: "{{workflow.name}} finished!"
 ```
+
+///
+
+/// tab | Python
+
+```python
+from pydantic import BaseModel
+
+from hera.workflows.models import Plugin, Template
+
+
+class SlackModel(BaseModel):
+    text: str
+
+
+class SlackPlugin(Plugin):
+    slack: SlackModel
+
+
+Template(
+    name="plugin-template",
+    plugin=SlackPlugin(
+        slack=SlackModel(text="{{workflow.name}} finished!"),
+    ),
+)
+
+```
+
+///
 
 ##### [Container Set](fields.md#containersettemplate)
 
@@ -149,6 +283,8 @@ You can set a wide array of options to control execution, such as [`when:` claus
 
 In this example `step1` runs first. Once it is completed, `step2a` and `step2b` will run in parallel:
 
+/// tab | YAML
+
 ```yaml
   - name: hello-hello-hello
     steps:
@@ -160,6 +296,26 @@ In this example `step1` runs first. Once it is completed, `step2a` and `step2b` 
         template: run-data-second-half
 ```
 
+///
+
+/// tab | Python
+
+```python
+    with Steps(name="hello-hello-hello") as steps:
+        prepare_data(
+            name="step1",
+        )
+        with steps.parallel():
+            run_data_first_half(
+                name="step2a",
+            )
+            run_data_second_half(
+                name="step2b",
+            )
+```
+
+///
+
 ##### [DAG](fields.md#dagtemplate)
 
 A dag template allows you to define your tasks as a graph of dependencies.
@@ -167,6 +323,8 @@ In a DAG, you list all your tasks and set which other tasks must complete before
 Tasks without any dependencies will be run immediately.
 
 In this example `A` runs first. Once it is completed, `B` and `C` will run in parallel and once they both complete, `D` will run:
+
+/// tab | YAML
 
 ```yaml
   - name: diamond
@@ -184,6 +342,26 @@ In this example `A` runs first. Once it is completed, `B` and `C` will run in pa
         dependencies: [B, C]
         template: echo
 ```
+
+///
+
+/// tab | Python
+
+```python
+from hera.workflows import DAG, Container, Parameter, Workflow
+
+# <... snipped ...>
+    with DAG(name="diamond"):
+        A = echo(name="A")
+        B = echo(name="B")
+        C = echo(name="C")
+        D = echo(name="D")
+        A >> [B, C] >> D # (1)!
+```
+
+1. Hera uses [enhanced depends logic](../enhanced-depends-logic.md) when using `>>` to define dependencies.
+
+///
 
 ## Architecture
 
